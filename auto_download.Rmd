@@ -1,0 +1,48 @@
+---
+title: "Auto Downloads"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(fs)
+```
+
+```{r}
+numerals <- c(14:20, 15:21)
+
+numerals <- sort(numerals) %>% 
+   as.character() %>% 
+   str_flatten()
+
+numerals <- str_match_all(numerals, "\\d{4}") %>% 
+   unlist()
+
+numerals
+```
+
+```{r}
+data_urls <- paste0("https://www.football-data.co.uk/mmz4281/", numerals, "/E0.csv")
+
+data_urls
+```
+
+```{r}
+file_names <- paste0("epl_season_", numerals, ".csv")
+
+file_names
+```
+
+```{r}
+walk2(data_urls, file_names, download.file, mode = "wb")
+```
+
+```{r}
+file_move(file_names, "raw_data")
+```

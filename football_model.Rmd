@@ -1,0 +1,138 @@
+---
+title: "Football Model"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+```
+
+```{r}
+football_train <- football_xg_data %>% 
+   filter(season < 2017)
+
+football_test <- football_xg_data %>% 
+   filter(season > 2016 & season < 2022)
+```
+
+```{r}
+football_xg_cv <- football_train %>% 
+   sliding_window(lookback = 200L, assess_stop = 100L, step = 50L)
+```
+
+```{r}
+recipe_xg_points <- 
+   recipe(outcome ~ roll_xg_points_home + 
+          roll_xg_points_away, data = football_train) %>% 
+   step_normalize(all_predictors()) %>% 
+   step_string2factor(outcome, skip = TRUE) 
+```
+
+```{r}
+spec_xg_nnet <- multinom_reg(penalty = tune()) %>% 
+   set_engine("nnet") %>% 
+   set_mode("classification")
+```
+
+```{r}
+wrkflw_xg_net <- workflow() %>% 
+   add_model(spec_xg_nnet) %>% 
+   add_recipe(recipe_xg_points)
+```
+
+```{r}
+doParallel::registerDoParallel()
+```
+
+```{r}
+set.seed(2021)
+```
+
+```{r}
+tune_xg_points <- wrkflw_xg_net %>% 
+   tune_grid(resamples = football_xg_cv, grid = 30)
+```
+
+```{r}
+wrkflw_xg_net_final <- 
+   finalize_workflow(wrkflw_xg_net, select_best(tune_xg_points, "roc_auc"))
+```
+
+```{r}
+model_xg_net <- wrkflw_xg_net_final %>% 
+   fit(data = football_train)
+```
+
+```{r}
+preds_xg_points <- 
+   predict(model_xg_net, new_data = football_test, type = "prob") %>% 
+   rename(pred_home = .pred_H, pred_draw = .pred_D, pred_away = .pred_A)
+```
+
+```{r}
+football_test %>% 
+   bind_cols(preds_xg_points) %>% 
+   select(-starts_with("roll_")) %>% 
+   mutate(
+      home_imp_odds = 1 / max_home_price,
+      draw_imp_odds = 1 / max_draw_price,
+      away_imp_odds = 1 / max_away_price
+   ) %>% 
+   mutate(home_bets = if_else(
+      condition = pred_home > home_imp_odds,
+      true = (max_home_price * (outcome == "H")) -1,
+      false = 0
+   )) %>%
+   mutate(draw_bets = if_else(
+      condition = pred_draw > draw_imp_odds,
+      true = (max_draw_price * (outcome == "D")) -1,
+      false = 0
+   )) %>% 
+   mutate(away_bets = if_else(
+      condition = pred_away > away_imp_odds,
+      true = (max_away_price * (outcome == "A")) -1,
+      false = 0
+   )) %>%
+   group_by(season) %>% 
+   mutate(all_bets = home_bets + draw_bets + away_bets) %>%
+   summarise(
+      location = c("home_bets", "draw_bets", "away_bets"),
+      totals = c(
+         sum(home_bets != 0), 
+         sum(draw_bets != 0), 
+         sum(away_bets != 0)
+      ),
+      profits = c(
+         sum(home_bets), 
+         sum(draw_bets), 
+         sum(away_bets)
+      ),
+      percent = profits / totals
+   ) %>% ungroup() %>% filter(location == "home_bets")
+```
+
+```{r}
+football_test %>% 
+   bind_cols(preds_xg_points) %>% 
+   select(-starts_with("roll_")) %>%
+   mutate(implied_odds = 1 / max_home_price) %>% 
+   mutate(bets = if_else(
+      condition = pred_home > implied_odds, 
+      true = (max_home_price * (outcome == "H") - 1),
+      false = 0
+   )) %>% 
+   group_by(season) %>% 
+   summarise(profits = sum(bets)) %>% 
+   ungroup() %>% 
+   mutate(total_profits = cumsum(profits)) %>% 
+   ggplot(aes(x = season, y = total_profits)) +
+   geom_col(colour = "black", fill = "#56B4E9", alpha = 0.5) +
+   labs(x = "Season", y = NULL, title = "Showing accumulated profit over five seasons") +
+   theme_classic()
+```
+
+
+

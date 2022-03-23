@@ -1,0 +1,106 @@
+---
+title: "Web Scraping"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+   knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(RSelenium)
+library(robotstxt)
+```
+
+```{r}
+paths_allowed("understat.com/")
+```
+
+```{r}
+rs_client <- rsDriver(port = 4445L, version = "2.53.1")
+
+remDr <- rs_client$client
+
+remDr$open()
+```
+
+```{r}
+page_urls <- paste0("https://understat.com/league/EPL/", 2014:2021)
+
+football_xg_results <- 
+   tibble(
+      season = character(), 
+      home_team = character(), 
+      home_goals = character(), 
+      home_xg = character(), 
+      away_team = character(), 
+      away_goals = character(), 
+      away_xg = character()
+   )
+```
+
+
+```{r}
+
+for(web_page in page_urls) {
+   
+   remDr$navigate(web_page)
+   
+   Sys.sleep(time = 3)
+   
+   html <- remDr$getPageSource() %>% .[[1]] %>% read_html(html)
+   
+   season <- html_node(html, ".calendar-date") %>% html_text()
+   home_team <-  html_nodes(html, ".team-home a") %>% html_text()
+   home_goals <- html_nodes(html, ".teams-goals .team-home") %>% html_text()
+   home_xg <- html_nodes(html, ".teams-xG .team-home") %>% html_text()
+   away_team <- html_nodes(html, ".team-away a") %>% html_text()
+   away_goals <- html_nodes(html, ".teams-goals .team-away") %>% html_text()
+   away_xg <- html_nodes(html, ".teams-xG .team-away") %>% html_text()
+   
+   temp_tbl <- tibble(season, home_team, home_goals, home_xg, away_team, away_goals, away_xg)
+   
+   football_xg_results <- bind_rows(football_xg_results, temp_tbl)
+   
+   prev_page_button <- remDr$findElement(using = "css", ".calendar-prev") 
+   button_is_enabled <- prev_page_button$isElementEnabled() 
+
+      while(button_is_enabled[[1]]) {
+      
+         prev_page_button$clickElement() 
+         
+         Sys.sleep(time = 3)
+      
+         html <- remDr$getPageSource() %>% .[[1]] %>% read_html(html)
+         
+         season <- html_node(html, ".calendar-date") %>% html_text()      
+         home_team <-  html_nodes(html, ".team-home a") %>% html_text()
+         home_goals <- html_nodes(html, ".teams-goals .team-home") %>% html_text()
+         home_xg <- html_nodes(html, ".teams-xG .team-home") %>% html_text()
+         away_team <- html_nodes(html, ".team-away a") %>% html_text()
+         away_goals <- html_nodes(html, ".teams-goals .team-away") %>% html_text()
+         away_xg <- html_nodes(html, ".teams-xG .team-away") %>% html_text()
+         
+         temp_tbl <- tibble(season, home_team, home_goals, home_xg, away_team, away_goals, away_xg)
+      
+         football_xg_results <- bind_rows(football_xg_results, temp_tbl)
+      
+         prev_page_button <- remDr$findElement(using = "css", ".calendar-prev") 
+         button_is_enabled <- prev_page_button$isElementEnabled() 
+   }
+   
+}
+```
+
+```{r}
+write_csv(football_xg_results, "raw_data_2/football_xg_results")
+```
+
+
+
+
+

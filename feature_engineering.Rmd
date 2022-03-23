@@ -1,0 +1,104 @@
+---
+title: "Feature Engineering"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+   knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(slider)
+```
+
+```{r}
+football_xg <- football_data %>% 
+   drop_na() %>% 
+   select(date:away_team, outcome, starts_with("max_"), ends_with("_xg")) %>%
+   mutate(total_xg = home_xg + away_xg) %>% 
+   mutate(home_xg_percent = home_xg / total_xg * 3) %>%
+   mutate(away_xg_percent = away_xg / total_xg * 3)
+```
+
+```{r}
+football_xg <- football_xg %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   relocate(c(teams, location), .after = season) %>%
+   mutate(xg_points = if_else(
+      location == "home_team",
+      home_xg_percent,
+      away_xg_percent
+   ))
+```
+
+```{r}
+football_xg <- football_xg %>% 
+   group_by(teams) %>% 
+   mutate(roll_xg_points = slide_mean(xg_points, before = 6)) %>% 
+   mutate(roll_xg_points = lag(roll_xg_points)) %>% 
+   ungroup()
+```
+
+```{r}
+football_xg <- football_xg %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   ungroup() %>%
+   select(date, teams, match_number, roll_xg_points)
+```
+
+```{r}
+football_xg_data <- football_data %>% 
+   left_join(
+      football_xg, 
+      by = c("date" = "date", "home_team" = "teams")
+   ) %>% 
+   left_join(
+      football_xg,
+      by = c("date" = "date", "away_team" = "teams"),
+      suffix = c("_home", "_away")
+   ) %>% drop_na()
+```
+
+```{r}
+football_xg_data <- football_xg_data %>% 
+   select(date:away_team, outcome, starts_with("max_"), 
+          starts_with("match_"), starts_with("roll_")) %>%
+   filter(match_number_home >= 6 & match_number_away >= 6) %>%
+   select(-starts_with("match_"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

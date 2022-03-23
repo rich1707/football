@@ -1,0 +1,187 @@
+---
+title: "Data Exploration"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(gt)
+```
+
+
+```{r}
+football_data %>% 
+   mutate(outcome = case_when(
+      outcome == "H" ~ "Home",
+      outcome == "D" ~ "Draw",
+      outcome == "A" ~ "Away"
+   )) %>%
+   ggplot(aes(x = outcome, fill = outcome)) + 
+   geom_bar(colour = "black", alpha = 0.5) + 
+   facet_wrap(facets = "season") + 
+   coord_flip() + 
+   labs(x = NULL, y = NULL, title = "Total of each outcome by season") + 
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+   theme_classic()
+```
+
+```{r}
+football_data %>% 
+   group_by(season) %>% 
+   summarise(home = sum(home_goals),
+             away = sum(away_goals)) %>% 
+   ungroup() %>%
+   pivot_longer(home:away, names_to = "location", values_to = "goals") %>% 
+   mutate(location = factor(location, levels = c("away", "home"))) %>% 
+   ggplot(aes(x = location, y = goals)) + 
+   geom_col(aes(fill = location), colour = "black", alpha = 0.5) + 
+   facet_wrap(facet = "season") + 
+   coord_flip() + 
+   labs(x = NULL, y = NULL, title = "Total goals home and away by season") +
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#56B4E9")) +
+   theme_classic()
+```
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(points = case_when(
+      location == "home_team" & outcome == "H" ~ 3,
+      location == "home_team" & outcome == "D" ~ 1,
+      location == "home_team" & outcome == "A" ~ 0,
+      location == "away_team" & outcome == "H" ~ 0,
+      location == "away_team" & outcome == "D" ~ 1,
+      location == "away_team" & outcome == "A" ~ 3
+   )) %>% 
+   mutate(goals_scored = case_when(
+      location == "home_team" ~ home_goals,
+      location == "away_team" ~ away_goals
+   )) %>% 
+   mutate(goals_conceded = case_when(
+      location == "home_team" ~ away_goals,
+      location == "away_team" ~ home_goals
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_points = cumsum(points),
+          total_scored = cumsum(goals_scored),
+          total_conceded = cumsum(goals_conceded),
+          won = cumsum(points == 3),
+          drawn = cumsum(points == 1),
+          lost = cumsum(points == 0)) %>% 
+   ungroup() %>% 
+   filter(match_number == 38 & season == 2019) %>%
+   rename(GF = total_scored, GA = total_conceded) %>% 
+   mutate(GD = GF - GA) %>% 
+   mutate(played = match_number) %>% 
+   select(teams, played, won, drawn, lost, GF, GA, GD, total_points) %>% 
+   arrange(desc(total_points))
+```
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(goals_scored = case_when(
+      location == "home_team" ~ home_goals,
+      location == "away_team" ~ away_goals
+   )) %>% 
+   mutate(goals_conceded = case_when(
+      location == "home_team" ~ away_goals,
+      location == "away_team" ~ home_goals
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_scored = cumsum(goals_scored),
+          total_conceded = cumsum(goals_conceded),
+          goal_diff = total_scored - total_conceded)%>% 
+   ungroup() %>% 
+   filter(season == 2019 & match_number == 38) %>% 
+   select(teams, goal_diff) %>% 
+   mutate(goal_supremacy = goal_diff - min(goal_diff)) %>% 
+   mutate(teams = fct_reorder(teams, goal_supremacy)) %>% 
+   ggplot(aes(x = teams, y = goal_supremacy)) + 
+   geom_col(fill = "#56B4E9", alpha = 0.5, colour = "black") + 
+   coord_flip() +
+   labs(x = NULL, y = NULL, title = "Goal Supremacy in the 2018-19 Season") +
+   theme_classic()
+```
+
+
+```{r}
+team_order <- football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(points = case_when(
+      location == "home_team" & outcome == "H" ~ 3,
+      location == "home_team" & outcome == "D" ~ 1,
+      location == "home_team" & outcome == "A" ~ 0,
+      location == "away_team" & outcome == "H" ~ 0,
+      location == "away_team" & outcome == "D" ~ 1,
+      location == "away_team" & outcome == "A" ~ 3
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_points = cumsum(points)) %>% 
+   ungroup() %>%
+   filter(match_number == 38 & season == 2019) %>%
+   arrange(desc(total_points)) %>% 
+   pull(teams)
+```
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(match_outcome = case_when(
+      location == "home_team" & outcome == "H" ~ "Won",
+      location == "home_team" & outcome == "D" ~ "Drawn",
+      location == "home_team" & outcome == "A" ~ "Lost",
+      location == "away_team" & outcome == "H" ~ "Lost",
+      location == "away_team" & outcome == "D" ~ "Drawn",
+      location == "away_team" & outcome == "A" ~ "Won"
+   )) %>% 
+   mutate(match_outcome = factor(
+      match_outcome, levels = c("Lost", "Drawn", "Won"))
+      ) %>% 
+   mutate(teams = factor(teams, levels = team_order)) %>% 
+   filter(season == 2019) %>% 
+   ggplot(aes(x = match_outcome)) +
+   geom_bar(aes(fill = match_outcome), colour = "black", alpha = 0.5) + 
+   coord_flip() +
+   facet_wrap(facets = "teams") + 
+   labs(y = "Totals", x = NULL, 
+        title = "Breakdown of results by team for the 2018-19 season") + 
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+   theme_classic()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,186 @@
+---
+title: "Data Cleaning"
+author: "Richard Ryan"
+date: '2022-03-23'
+output: html_document
+---
+```{r setup, include=FALSE}
+   knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(clock)
+```
+
+```{r}
+football_xg_results <- read_csv("raw_data_2/football_xg_results")
+```
+
+```{r}
+football_xg_results <- football_xg_results %>% 
+   mutate(date = date_parse(season, format = "%A, %B %d, %Y")) %>% 
+   arrange(date, home_team)
+```
+
+```{r}
+football_xg_results <- football_xg_results %>% 
+   mutate(season = get_year(date) + (get_month(date) >= 8))
+```
+
+```{r}
+football_xg_results <- football_xg_results %>% 
+   select(-date)
+```
+
+```{r}
+football_price_data <- dir("raw_data", full.names = TRUE) %>% 
+   map_dfr(function(.x) read_csv(.x, col_types = cols(.default = "c")))
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   select(Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, BbMxH, 
+          BbAvH, BbMxD, BbAvD, BbMxA, BbAvA, B365H:VCA) 
+
+football_price_data <- football_price_data %>% 
+   rename(date = Date, home_team = HomeTeam, away_team = AwayTeam,
+          home_goals = FTHG, away_goals = FTAG, outcome = FTR, max_home_price = BbMxH,
+          avg_home_price = BbAvH, max_draw_price = BbMxD, avg_draw_price = BbAvD,
+          max_away_price = BbMxA, avg_away_price = BbAvA)
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(
+      date = str_replace(date, "/10$", "/2010"),
+      date = str_replace(date, "/11$", "/2011"),
+      date = str_replace(date, "/12$", "/2012"),
+      date = str_replace(date, "/13$", "/2013"),
+      date = str_replace(date, "/14$", "/2014"),
+      date = str_replace(date, "/15$", "/2015"),
+      date = str_replace(date, "/16$", "/2016"),
+      date = str_replace(date, "/17$", "/2017")
+   )
+```
+
+```{r}
+football_price_data %>% 
+   map_dfr(function(.x) tibble(
+      var_type = class(.x),
+      total_na = sum(is.na(.x))
+   ), .id = "variable"
+)
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(across(home_goals:away_goals, as.integer))
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(across(B365H:VCA, as.numeric))
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_home_price = max(c_across(ends_with("H")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_home_price = mean(c_across(ends_with("H")), na.rm = TRUE)) %>% 
+   ungroup()
+
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_draw_price = max(c_across(ends_with("D")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_draw_price = mean(c_across(ends_with("D")), na.rm = TRUE)) %>% 
+   ungroup()
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_away_price = max(c_across(ends_with("A")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_away_price = mean(c_across(ends_with("A")), na.rm = TRUE)) %>% 
+   ungroup()
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(date = date_parse(date, format = "%d/%m/%Y"))
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(across(home_goals:away_goals, as.integer))
+```
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(season = get_year(date) + (get_month(date) >= 8)) %>% 
+   relocate(season, .after = date) %>% 
+   select(date:avg_away_price) %>% 
+   drop_na()
+```
+
+```{r}
+football_xg_results <- football_xg_results %>% 
+   mutate(home_team = case_when(
+      home_team == "Manchester City" ~ "Man City",
+      home_team == "Manchester United" ~ "Man United",
+      home_team == "Newcastle United" ~ "Newcastle",
+      home_team == "Queens Park Rangers" ~ "QPR",
+      home_team == "West Bromwich Albion" ~ "West Brom",
+      home_team == "Wolverhampton Wanderers" ~ "Wolves",
+      TRUE ~ home_team
+   ))
+
+football_xg_results <- football_xg_results %>% 
+   mutate(away_team = case_when(
+      away_team == "Manchester City" ~ "Man City",
+      away_team == "Manchester United" ~ "Man United",
+      away_team == "Newcastle United" ~ "Newcastle",
+      away_team == "Queens Park Rangers" ~ "QPR",
+      away_team == "West Bromwich Albion" ~ "West Brom",
+      away_team == "Wolverhampton Wanderers" ~ "Wolves",
+      TRUE ~ away_team
+   ))
+```
+
+```{r}
+football_data <- 
+   football_price_data %>% 
+   left_join(football_xg_results, 
+             by = c("season" = "season", "home_team" = "home_team", "away_team" = "away_team", 
+                    "home_goals" = "home_goals", "away_goals" = "away_goals")) %>% 
+   arrange(date, home_team)
+```
+
+```{r}
+write_csv(football_data, "cleaned_data/football_data")
+```
+
+
+
+
+
+
+
+
+
+
