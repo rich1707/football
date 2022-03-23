@@ -1,2 +1,2 @@
-# footbal
+# football
 A simple football betting model
