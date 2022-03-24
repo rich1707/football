@@ -1,0 +1,920 @@
+---
+title: "A Simple Football Betting Model"
+author: "Richard Ryan"
+date: '11 March 2022'
+output: 
+   html_document: 
+     css: style.css
+     theme: readable
+     highlight: pygments
+     toc: true
+     toc_depth: 3
+     toc_float: true
+     number_sections: true
+---
+
+<body style="background-color:#e8dcda;"> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+
+# fonts - Lato and Fira Sans
+```
+
+# Introduction
+
+Our goal here is to investigate whether a profitable football betting model can be built using publicly available data. 
+
+Our answer to this question will involve building a full modelling workflow consisting of the following steps.
+
+   * Collecting data from various online sources
+   * Cleaning the data
+   * Conducting exploratory data analysis to uncover trends and tendencies within the data
+   * Feature Engineering
+   * Tune and train an explanatory model
+   * Fit our tuned model to previously unseen testing data
+   * Evaluate the results.
+   
+Having outlined what the process will be, we can now load the packages we will need to accomplish our goal. 
+
+```{r}
+
+library(tidyverse)
+library(slider)
+library(clock)
+
+library(tidymodels)
+
+library(rvest)
+library(RSelenium)
+library(robotstxt)
+
+library(fs)
+
+```
+
+# Collecting Data
+
+All data analysis starts with data. When it comes to football, the best data is usually collected by organisations such as [Opta]("https://www.statsperform.com/opta/") or [Wyscout]("https://wyscout.com/"). The data provided by these organisations is remarkably detailed and sophisticated, but it isn't easy to access for most people owing to very high cost of subscribing to the service. 
+
+Is it possible to make a profit on football betting without access to the above services? In other words, can it be done with data that is freely available to download? The best place to start here is the [Football Data Website]("https://www.football-data.co.uk/data.php"), which provides several years of data for each of the major European leagues. In what follows, we shall only consider the English Premier League.
+
+As we are dealing with just seven seasons worth of data, it would be easy enough to download the files we need manually; but it is better to use code as then we will make the process faster and more scalable going forward.  
+
+## Auto Download Process
+
+Thankfully the links to the csv files have a common format, with the only difference being a reference to the season in question. This reference to the season takes the form of four digits, such that 1920 refers to the 2019-2020 season.
+
+Therefore our first job is to construct a vector of the digits we need:
+
+```{r}
+numerals <- c(10:20, 11:21)
+
+numerals <- sort(numerals) %>% 
+   as.character() %>% 
+   str_flatten()
+
+numerals <- str_match_all(numerals, "\\d{4}") %>% 
+   unlist()
+
+numerals
+```
+
+We can now create a vector of the links we need for the auto-download function:
+
+```{r}
+
+data_urls <- paste0("https://www.football-data.co.uk/mmz4281/", numerals, "/E0.csv")
+
+data_urls
+
+```
+
+Before downloading the files, we will also need to provide a vector of names with which the files will be labelled: 
+
+```{r}
+file_names <- paste0("epl_season_", numerals, ".csv")
+
+file_names
+```
+
+The function `walk2()` from the `purrr` package makes the downloading very simple, calling the `download.file()` function for every link in our vector of data urls. 
+
+```{r, eval=FALSE}
+
+walk2(data_urls, file_names, download.file, mode = "wb")
+
+```
+
+The foregoing step downloads the files into our working directory. We now use the `fs` package to move the files into a raw_data folder.
+
+```{r, eval=FALSE}
+
+file_move(file_names, "raw_data")
+
+```
+
+
+## Webscraping
+
+The above downloads give us enough data to start building models. However, it would be nice to be able to include some rather more advanced statistics, such as those provided by [Opta]("https://www.statsperform.com/opta/") or [Wyscout]("https://wyscout.com/"). The most important statistic provided by these organisations is the expected goals figure, usually abbreviated to xG. 
+
+Thankfully there is a website, namely [Understat]("https://understat.com/"), that provides an xG figure free of charge. [Understat]("https://understat.com/") does not provide and API or have csv files available for download, so to access this information we shall have to build a webscraper.
+
+We first establish that there are no restrictions in place:
+
+```{r, eval=FALSE}
+
+paths_allowed("understat.com/")
+
+```
+
+All user-agents are permitted so there is no problems scraping the site. 
+
+Unfortunately the website uses JavaScript to render much of the information we want, so the job of scraping the site is not as straightforward as we might wish. 
+
+We shall set up a docker container running selenium server by typing `docker run -d -p 4445:4444 -p 5901:5900 selenium/standalone-chrome-debug` into the command line. We then connect to the server as follows:
+
+```{r, eval=FALSE}
+
+rs_client <- rsDriver(port = 4445L, version = "2.53.1")
+
+remDr <- rs_client$client
+
+remDr$open()
+
+```
+
+Our scraper will use a combination of `RSelenium` and `rvest`. The selenium functions will be used to navigate between the pages and `rvest` will be used to scrape the data once the page in question has loaded. 
+
+We start with a vector of urls and an empty data-frame.
+
+```{r, eval=FALSE}
+
+page_urls <- paste0("https://understat.com/league/EPL/", 2014:2021)
+
+football_xg_results <- 
+   tibble(
+      season = character(), 
+      home_team = character(), 
+      home_goals = character(), 
+      home_xg = character(), 
+      away_team = character(), 
+      away_goals = character(), 
+      away_xg = character()
+   )
+
+```
+
+We now loop over the `page_url` vector, using `RSelenium` to navigate between subpages. 
+
+There aren't many situations in R where a for-loop is needed, but using a `map()` function would be very complex here. 
+
+Perhaps even more unusual than the for-loop is the use of a nested while-loop; this is needed in order to navigate between the pages rendered by JavaScript. Basically, the while-loop runs for as long as the prev_page_button (a JavaSCript control) is active, which allows us to access all subpages within each url.  
+
+```{r, eval=FALSE}
+
+for(web_page in page_urls) {
+   
+   remDr$navigate(web_page)
+   
+   Sys.sleep(time = 3)
+   
+   html <- remDr$getPageSource() %>% .[[1]] %>% read_html(html)
+   
+   season <- html_node(html, ".calendar-date") %>% html_text()
+   home_team <-  html_nodes(html, ".team-home a") %>% html_text()
+   home_goals <- html_nodes(html, ".teams-goals .team-home") %>% html_text()
+   home_xg <- html_nodes(html, ".teams-xG .team-home") %>% html_text()
+   away_team <- html_nodes(html, ".team-away a") %>% html_text()
+   away_goals <- html_nodes(html, ".teams-goals .team-away") %>% html_text()
+   away_xg <- html_nodes(html, ".teams-xG .team-away") %>% html_text()
+   
+   temp_tbl <- tibble(season, home_team, home_goals, home_xg, away_team, 
+                      away_goals, away_xg)
+   
+   football_xg_results <- bind_rows(football_xg_results, temp_tbl)
+   
+   prev_page_button <- remDr$findElement(using = "css", ".calendar-prev") 
+   button_is_enabled <- prev_page_button$isElementEnabled() 
+
+      while(button_is_enabled[[1]]) {
+      
+         prev_page_button$clickElement() 
+         
+         Sys.sleep(time = 3)
+      
+         html <- remDr$getPageSource() %>% .[[1]] %>% read_html(html)
+         
+         season <- html_node(html, ".calendar-date") %>% html_text()      
+         home_team <-  html_nodes(html, ".team-home a") %>% html_text()
+         home_goals <- html_nodes(html, ".teams-goals .team-home") %>% html_text()
+         home_xg <- html_nodes(html, ".teams-xG .team-home") %>% html_text()
+         away_team <- html_nodes(html, ".team-away a") %>% html_text()
+         away_goals <- html_nodes(html, ".teams-goals .team-away") %>% html_text()
+         away_xg <- html_nodes(html, ".teams-xG .team-away") %>% html_text()
+         
+         temp_tbl <- tibble(season, home_team, home_goals, home_xg, 
+                            away_team, away_goals, away_xg)
+      
+         football_xg_results <- bind_rows(football_xg_results, temp_tbl)
+      
+         prev_page_button <- remDr$findElement(using = "css", ".calendar-prev") 
+         button_is_enabled <- prev_page_button$isElementEnabled() 
+   }
+   
+}
+
+```
+
+Our data is now harvested into a dataframe and can now be written to disk.
+
+```{r, eval=FALSE}
+
+write_csv(football_xg_results, "raw_data_2/football_xg_results")
+
+```
+
+
+# Data Cleaning
+
+One dataframe and a collection of csv files. Before we can start building our model, we will have to combine these csv files into a dataframe and both dataframes will need to be cleaned. 
+
+The two dataframes can then be joined together for feature engineering and modelling.
+
+## The xG dataframe
+
+We can make a start on the the `football_xg_results` dataframe, as this is the simpler task of the two. Start by reading in the relevant dataframe:
+
+```{r}
+football_xg_results <- read_csv("raw_data_2/football_xg_results")
+```
+
+The first thing to check, of course, is whether we have any missing values. 
+
+```{r}
+football_xg_results %>% 
+   map_int(function(.x) sum(is.na(.x)))
+```
+
+So there is no data missing. 
+
+However, if we look closely at the data, we shall see that that the date of each match is not always correct. The reason for the error is down to the way we wrote our scraper, which didn't record the data on each subpage. To harvest the correct date was possible but would have required a much more complicated approach. I didn't feel as though this extra complexity was warranted because, as previously stated, we intend to join this dataframe with the data we downloaded from the [Football Data Website]("https://www.football-data.co.uk/data.php"), in which all the date features are correct. 
+
+So for now all we really need to do is construct a season variable, which will use for the upcoming join between dataframes. Therefore let's start by using the `clock` package to parse the date into a more workable format:
+
+```{r}
+
+football_xg_results <- football_xg_results %>% 
+   mutate(date = date_parse(season, format = "%A, %B %d, %Y")) %>% 
+   arrange(date, home_team)
+
+```
+
+We can now engineer a season variable, again using the `clock` package. At this point the date variable is supernumerary and can be dropped.
+
+```{r}
+
+football_xg_results <- football_xg_results %>% 
+   mutate(season = get_year(date) + (get_month(date) >= 8)) %>% 
+   select(-date)
+
+```
+
+## The basic dataframe
+
+Our first job is to read the various csv files into a single dataframe. 
+
+We shall call this dataframe `football_price_data` as it contain essential information as to the betting odds available on each match.
+
+```{r}
+football_price_data <- dir("raw_data", full.names = TRUE) %>% 
+   map_dfr(function(.x) read_csv(.x, col_types = cols(.default = "c")))
+```
+
+First we rename our features to better suit our purpose.
+
+```{r}
+football_price_data <- football_price_data %>% 
+   select(date = Date, home_team = HomeTeam, away_team = AwayTeam,
+          home_goals = FTHG, away_goals = FTAG, outcome = FTR, max_home_price = BbMxH,
+          avg_home_price = BbAvH, max_draw_price = BbMxD, avg_draw_price = BbAvD,
+          max_away_price = BbMxA, avg_away_price = BbAvA, B365H:BSA)
+```
+
+Now that we have read in our data, we need to check for missing values
+
+```{r}
+
+football_price_data %>% 
+   select(date:avg_away_price) %>% 
+   map_int(function(.x) sum(is.na(.x)))
+
+```
+
+There are 761 missing values for each of the price variables; thankfully this is easily fixed.
+
+We also need to check on the variable-type of our features to avoid any type mismatches when we begin feature engineering and modelling. 
+
+```{r}
+
+football_price_data %>% 
+   select(date:avg_away_price) %>%
+   map_chr(function(.x) class(.x))
+
+```
+
+Let's make it our first job to convert each variable to the correct class. The outcome needs to be a factor and all features relating to goals and betting odds need to be numeric.
+
+```{r}
+
+football_price_data <- football_price_data %>% 
+   relocate(outcome, .after = away_team) %>% 
+   mutate(outcome = as.factor(outcome)) %>% 
+   mutate(across(home_goals:avg_away_price, as.numeric))
+
+```
+
+We can now turn our attention to the date feature. This is rather more complex, as the date is represented in two different ways; we therefore need to rework the date variable into a consistent format. We do this using a simple regular expression:
+
+```{r}
+
+football_price_data <- football_price_data %>% 
+   mutate(
+      date = str_replace(date, "/10$", "/2010"),
+      date = str_replace(date, "/11$", "/2011"),
+      date = str_replace(date, "/12$", "/2012"),
+      date = str_replace(date, "/13$", "/2013"),
+      date = str_replace(date, "/14$", "/2014"),
+      date = str_replace(date, "/15$", "/2015"),
+      date = str_replace(date, "/16$", "/2016"),
+      date = str_replace(date, "/17$", "/2017")
+   )
+
+```
+
+With the irregularities removed, we can now convert the variable into the format of a true date:
+
+```{r}
+
+football_price_data <- football_price_data %>% 
+   mutate(date = date_parse(date, format = "%d/%m/%Y"))
+
+```
+
+Next we need to calculate the missing values. 
+
+To do this, we simply calculate the `max()` and the `mean()` from the given bookmakers' prices. This is a slightly more complicated process than usual, as we have to operate on our data on a row-by-row basis, but the `rowwise()` function makes this a relatively painless affair.
+
+We start by converting the columns we need to a numeric format:
+
+```{r}
+football_price_data <- football_price_data %>% 
+   mutate(across(B365H:BSA, as.numeric))
+```
+
+We then calculate the missing data using `rowwise()` and `c_across()`:
+
+```{r}
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_home_price = max(c_across(ends_with("H")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_home_price = mean(c_across(ends_with("H")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_draw_price = max(c_across(ends_with("D")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_draw_price = mean(c_across(ends_with("D")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(max_away_price = max(c_across(ends_with("A")), na.rm = TRUE)) %>% 
+   ungroup()
+
+football_price_data <- football_price_data %>% 
+   rowwise() %>% 
+   mutate(avg_away_price = mean(c_across(ends_with("A")), na.rm = TRUE)) %>% 
+   ungroup()
+```
+
+Finally we select the columns we need and drop any remaining NA values:
+
+```{r}
+football_price_data <- football_price_data %>% 
+   select(date:avg_away_price) %>% 
+   drop_na()
+```
+
+## Joining our dataframes
+
+In order to join our dataframes a couple of additional steps are needed. 
+
+First we need to engineer a season variable in our `football_price_data` dataframe. This variable, together with the home and away teams, acts like a key-column in a database, guaranteeing that our dataframes will be joined correctly.  
+
+```{r}
+
+football_price_data <- football_price_data %>% 
+   mutate(season = get_year(date) + (get_month(date) >= 8)) %>% 
+   relocate(season, .after = date)
+
+```
+
+The second (and final) step is make the names of the teams consistent. 
+
+```{r}
+
+football_xg_results <- football_xg_results %>% 
+   mutate(home_team = case_when(
+      home_team == "Manchester City" ~ "Man City",
+      home_team == "Manchester United" ~ "Man United",
+      home_team == "Newcastle United" ~ "Newcastle",
+      home_team == "Queens Park Rangers" ~ "QPR",
+      home_team == "West Bromwich Albion" ~ "West Brom",
+      home_team == "Wolverhampton Wanderers" ~ "Wolves",
+      TRUE ~ home_team
+   ))
+
+football_xg_results <- football_xg_results %>% 
+   mutate(away_team = case_when(
+      away_team == "Manchester City" ~ "Man City",
+      away_team == "Manchester United" ~ "Man United",
+      away_team == "Newcastle United" ~ "Newcastle",
+      away_team == "Queens Park Rangers" ~ "QPR",
+      away_team == "West Bromwich Albion" ~ "West Brom",
+      away_team == "Wolverhampton Wanderers" ~ "Wolves",
+      TRUE ~ away_team
+   ))
+
+```
+
+We can now join our dataframes into one:
+
+```{r}
+football_data <- 
+   football_price_data %>% 
+   left_join(football_xg_results, 
+             by = c("season" = "season", "home_team" = "home_team", 
+                    "away_team" = "away_team", "home_goals" = "home_goals", 
+                    "away_goals" = "away_goals")) %>% 
+   arrange(date, home_team)
+```
+
+Finally, we write the result to disk:
+
+```{r}
+
+write_csv(football_data, "cleaned_data/football_data")
+
+```
+
+# Data Exploration
+
+The most important part of any model is feature engineering. However, while the success of our model will be highly dependent on feature engineering, the quality of our feature engineering will likewise depend upon our data exploration. Simply put, without a thorough understanding of our data we will not be in a position to engineer the features we need.
+
+In this instance, we do have a few shortcuts open to us. It is well known that the probability of a given team winning a match can be modelled quite accurately using just two features, namely home-advantage and average goals scored. So to save ourselves some time, we shall focus on these features in what follows.
+
+## Home Advantage
+
+Let's first consider the contribution to the outcome of a match. This is easily measured in football, at least superficially, as every team plays every other team twice per season, with one of these matches being played at the home stadium and one away. If the respective ability of the teams in question was all that mattered, then we would see no difference in the number of home-wins vs away-wins.
+
+```{r}
+football_data %>% 
+   mutate(outcome = case_when(
+      outcome == "H" ~ "Home",
+      outcome == "D" ~ "Draw",
+      outcome == "A" ~ "Away"
+   )) %>%
+   ggplot(aes(x = outcome, fill = outcome)) + 
+   geom_bar(colour = "black", alpha = 0.5) + 
+   facet_wrap(facets = "season") + 
+   coord_flip() + 
+   labs(x = NULL, y = NULL, title = "Total of each outcome by season") + 
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+   theme_classic()
+```
+
+As we can see, in all bar one season, the home team won more matches than their share. The single season when this did not hold was 2020-21, when the pandemic meant matches were played behind closed doors. This suggests that crowd support is a significant factor on the outcome of games.
+
+The above finding is also supported by the total goals scored per season, both home and away.
+
+```{r}
+football_data %>% 
+   group_by(season) %>% 
+   summarise(home = sum(home_goals),
+             away = sum(away_goals)) %>% 
+   ungroup() %>%
+   pivot_longer(home:away, names_to = "location", values_to = "goals") %>% 
+   mutate(location = factor(location, levels = c("away", "home"))) %>% 
+   ggplot(aes(x = location, y = goals)) + 
+   geom_col(aes(fill = location), colour = "black", alpha = 0.5) + 
+   facet_wrap(facet = "season") + 
+   coord_flip() + 
+   labs(x = NULL, y = NULL, title = "Total goals home and away by season") +
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#56B4E9")) +
+   theme_classic()
+```
+
+As we can see, more goals were scored at home in every season save 2020-21. Given that the home vs. away wins in 2020-21 are exactly what we would expect given the ratio of home vs. away goals, we can feel even more secure in our conclusion that this was an anomaly brought about by the exclusion of fans. But were future matches to be played behind closed doors it would make sense to remove home-advantage from our model.
+
+## Team Ability
+
+We can measure team ability in one of two ways: (1) by the matches they win; or (2) by the goals they score and concede. Whichever metric we choose, it is clear that there is a gulf between the best and worst teams in the English Premier League. 
+
+Consider, for example, the League table for the classic 2018-19 season:
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(points = case_when(
+      location == "home_team" & outcome == "H" ~ 3,
+      location == "home_team" & outcome == "D" ~ 1,
+      location == "home_team" & outcome == "A" ~ 0,
+      location == "away_team" & outcome == "H" ~ 0,
+      location == "away_team" & outcome == "D" ~ 1,
+      location == "away_team" & outcome == "A" ~ 3
+   )) %>% 
+   mutate(goals_scored = case_when(
+      location == "home_team" ~ home_goals,
+      location == "away_team" ~ away_goals
+   )) %>% 
+   mutate(goals_conceded = case_when(
+      location == "home_team" ~ away_goals,
+      location == "away_team" ~ home_goals
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_points = cumsum(points),
+          total_scored = cumsum(goals_scored),
+          total_conceded = cumsum(goals_conceded),
+          won = cumsum(points == 3),
+          drawn = cumsum(points == 1),
+          lost = cumsum(points == 0)) %>% 
+   ungroup() %>% 
+   filter(match_number == 38 & season == 2019) %>%
+   rename(GF = total_scored, GA = total_conceded) %>% 
+   mutate(GD = GF - GA) %>% 
+   mutate(played = match_number) %>% 
+   select(teams, played, won, drawn, lost, GF, GA, GD, total_points) %>% 
+   arrange(desc(total_points))
+```
+
+The goal difference between the top and bottom sides is a remarkable 126 goals across just 38 games. This is a staggering difference and the features we build for our model must reflect this. (Introduce goal supremacy here)
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(goals_scored = case_when(
+      location == "home_team" ~ home_goals,
+      location == "away_team" ~ away_goals
+   )) %>% 
+   mutate(goals_conceded = case_when(
+      location == "home_team" ~ away_goals,
+      location == "away_team" ~ home_goals
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_scored = cumsum(goals_scored),
+          total_conceded = cumsum(goals_conceded),
+          goal_diff = total_scored - total_conceded)%>% 
+   ungroup() %>% 
+   filter(season == 2019 & match_number == 38) %>% 
+   select(teams, goal_diff) %>% 
+   mutate(goal_supremacy = goal_diff - min(goal_diff)) %>% 
+   mutate(teams = fct_reorder(teams, goal_supremacy)) %>% 
+   ggplot(aes(x = teams, y = goal_supremacy)) + 
+   geom_col(fill = "#56B4E9", alpha = 0.5, colour = "black") + 
+   coord_flip() +
+   labs(x = NULL, y = NULL, title = "Goal Supremacy in the 2018-19 Season") +
+   theme_classic()
+```
+
+Similarly we show the ability difference by plotting the number of wins, draws and loses for each of the sides. 
+
+This is a more complicated plot and will require us to first extract a vector of team-names, ordered by way of finishing position:
+
+```{r}
+team_order <- football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(points = case_when(
+      location == "home_team" & outcome == "H" ~ 3,
+      location == "home_team" & outcome == "D" ~ 1,
+      location == "home_team" & outcome == "A" ~ 0,
+      location == "away_team" & outcome == "H" ~ 0,
+      location == "away_team" & outcome == "D" ~ 1,
+      location == "away_team" & outcome == "A" ~ 3
+   )) %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   mutate(total_points = cumsum(points)) %>% 
+   ungroup() %>%
+   filter(match_number == 38 & season == 2019) %>%
+   arrange(desc(total_points)) %>% 
+   pull(teams)
+```
+
+Explain plot below:
+
+```{r}
+football_data %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   mutate(match_outcome = case_when(
+      location == "home_team" & outcome == "H" ~ "Won",
+      location == "home_team" & outcome == "D" ~ "Drawn",
+      location == "home_team" & outcome == "A" ~ "Lost",
+      location == "away_team" & outcome == "H" ~ "Lost",
+      location == "away_team" & outcome == "D" ~ "Drawn",
+      location == "away_team" & outcome == "A" ~ "Won"
+   )) %>% 
+   mutate(match_outcome = factor(
+      match_outcome, levels = c("Lost", "Drawn", "Won"))
+      ) %>% 
+   mutate(teams = factor(teams, levels = team_order)) %>% 
+   filter(season == 2019) %>% 
+   ggplot(aes(x = match_outcome)) +
+   geom_bar(aes(fill = match_outcome), colour = "black", alpha = 0.5) + 
+   coord_flip() +
+   facet_wrap(facets = "teams") + 
+   labs(y = "Totals", x = NULL, 
+        title = "Breakdown of results by team for the 2018-19 season") + 
+   guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
+   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+   theme_classic()
+```
+
+Clearly the ability of the given teams are the biggest factor determining who wins. The home-advantage is also significant.
+
+# Feature Engineering
+
+As we have seen, both goals-scored and matches-won are good indicators of ability, and in what follows we shall attempt to combine these features into a single indicator variable.
+
+We shall award 3 points for each game, with each side receiving a percentage of these points according to their xG superiority. Over the last six fights.
+
+First let's work out the total xG for each game and then the percentage of this total each side contributed. Multiplying this by 3 given us the share of the points awarded to each team.
+
+```{r}
+football_xg <- football_data %>% 
+   drop_na() %>% 
+   select(date:away_team, outcome, starts_with("max_"), ends_with("_xg")) %>%
+   mutate(total_xg = home_xg + away_xg) %>% 
+   mutate(home_xg_percent = home_xg / total_xg * 3) %>%
+   mutate(away_xg_percent = away_xg / total_xg * 3)
+```
+
+We now need a running total for each side. To do this we `pivot_longer()` to group the home and away teams into a single column. We then create an `xg_points` feature, to which we assign the `home_xg_percent` variable when the location == home and the `away_xg_percent` variable when the location == away.  
+
+```{r}
+football_xg <- football_xg %>% 
+   pivot_longer(home_team:away_team, names_to = "location", values_to = "teams") %>% 
+   relocate(c(teams, location), .after = season) %>%
+   mutate(xg_points = if_else(
+      location == "home_team",
+      home_xg_percent,
+      away_xg_percent
+   ))
+```
+
+We can now calculate a rolling average of xg_points for the past six games. We `group_by()` the teams variable and then use the `slide_mean()` function from the `slider` package.
+
+```{r}
+football_xg <- football_xg %>% 
+   group_by(teams) %>% 
+   mutate(roll_xg_points = slide_mean(xg_points, before = 6)) %>% 
+   mutate(roll_xg_points = lag(roll_xg_points)) %>% 
+   ungroup()
+```
+
+Next we shall create a match-number:
+
+```{r}
+football_xg <- football_xg %>% 
+   group_by(season, teams) %>% 
+   mutate(match_number = seq(teams)) %>% 
+   ungroup()
+```
+
+At this point, the ability-rating is finished. In order to calculate the home-advantage we need only pivot our data back into wide format. Unfortunately the `pivot_wider()` doesn't work very well in this particular case, so we will have to join our data onto the `football_data` dataset. 
+
+First we `select()` the columns we will need for the join:
+
+```{r}
+football_xg <- football_xg %>% 
+   select(date, teams, match_number, roll_xg_points)
+```
+
+Then we `left_join()` our data:
+
+```{r}
+football_xg_data <- football_data %>% 
+   left_join(
+      football_xg, 
+      by = c("date" = "date", "home_team" = "teams")
+   ) %>% 
+   left_join(
+      football_xg,
+      by = c("date" = "date", "away_team" = "teams"),
+      suffix = c("_home", "_away")
+   ) %>% drop_na()
+```
+
+We now `select()` the columns needed for our model. We also `filter()` out matches early in the season, so as to train our model on the most recent, and therefore the most relevant, games. 
+
+```{r}
+football_xg_data <- football_xg_data %>% 
+   select(date:away_team, outcome, starts_with("max_"), 
+          starts_with("match_"), starts_with("roll_")) %>%
+   filter(match_number_home >= 6 & match_number_away >= 6) %>%
+   select(-starts_with("match_"))
+```
+
+As we can see, our two predictive variables are `roll_xg_points_home` and `roll_xg_points_away`. The magnitude of each of these variables should indicate the ability of the side in question, and the "_home" and "_away" suffixes should allow our model to take home-advantage into account too.
+
+```{r}
+football_xg_data %>% 
+   select(date:outcome, starts_with("roll_"))
+```
+
+Our next task is to train our model.
+
+# Building a Model
+
+The first thing to do when training a model is to split our data into train and test sets. In this case, we shall split our data by season.
+
+```{r}
+football_train <- football_xg_data %>% 
+   filter(season < 2017)
+
+football_test <- football_xg_data %>% 
+   filter(season > 2016 & season < 2022)
+```
+
+As we will be using multinomial regression, we shall also need cross-validation folds on which to tune the algorithm. The data we are training is somewhat time-sensitive, so we cannot split the data into cross-validation folds in the normal way. Instead we shall use the relatively new `sliding_window()` function from the `rsample` package, which shoud remove any risk of data leakage:
+
+```{r}
+football_xg_cv <- football_train %>% 
+   sliding_window(lookback = 200L, assess_stop = 100L, step = 50L)
+```
+
+This gives us 8 folds on which to `tune()` our model:
+
+```{r}
+football_xg_cv
+```
+
+Next we need to preprocess our data using the `recipe` package:
+
+```{r}
+recipe_xg_points <- 
+   recipe(outcome ~ roll_xg_points_home + 
+          roll_xg_points_away, data = football_train) %>% 
+   step_normalize(all_predictors()) %>% 
+   step_string2factor(outcome, skip = TRUE) 
+```
+
+We also use the `parsnip` package to specify an algorithm and a model engine:
+
+```{r}
+spec_xg_nnet <- multinom_reg(penalty = tune()) %>% 
+   set_engine("nnet") %>% 
+   set_mode("classification")
+```
+
+For simplicity, we unite the model specification and the recipe into a workflow object:
+
+```{r}
+wrkflw_xg_net <- workflow() %>% 
+   add_model(spec_xg_nnet) %>% 
+   add_recipe(recipe_xg_points)
+```
+
+Tuning a model can be very time consuming, so we use the `doParrallel` package to speed things up. This will allow us to use all of the cores on our processor rather than just one.
+
+```{r}
+doParallel::registerDoParallel()
+```
+
+We set a seed for reproducibility:
+
+```{r}
+set.seed(2021)
+```
+
+And finally we tune our model:
+
+```{r}
+tune_xg_points <- wrkflw_xg_net %>% 
+   tune_grid(resamples = football_xg_cv, grid = 30)
+```
+
+Having tuned our model, we then select the best outcome and finalise our hyper-parameter.
+
+```{r}
+wrkflw_xg_net_final <- 
+   finalize_workflow(wrkflw_xg_net, select_best(tune_xg_points, "roc_auc"))
+```
+
+The final workflow object contains our recipe, our model specification, and also a value for the `penalty()` hyper-parameter:
+
+```{r}
+wrkflw_xg_net_final
+```
+
+The final step in this section is to `fit()` our tuned model to the training data:
+
+```{r}
+model_xg_net <- wrkflw_xg_net_final %>% 
+   fit(data = football_train)
+```
+
+We are now ready to use our model to predict on the matches we assigned to our test dataset.
+
+# Evaluating our Model
+
+```{r}
+preds_xg_points <- 
+   predict(model_xg_net, new_data = football_test, type = "prob") %>% 
+   rename(pred_home = .pred_H, pred_draw = .pred_D, pred_away = .pred_A)
+```
+
+```{r}
+football_test %>% 
+   bind_cols(preds_xg_points) %>% 
+   select(-starts_with("roll_")) %>% 
+   mutate(
+      home_imp_odds = 1 / max_home_price,
+      draw_imp_odds = 1 / max_draw_price,
+      away_imp_odds = 1 / max_away_price
+   ) %>% 
+   mutate(home_bets = if_else(
+      condition = pred_home > home_imp_odds,
+      true = (max_home_price * (outcome == "H")) -1,
+      false = 0
+   )) %>%
+   mutate(draw_bets = if_else(
+      condition = pred_draw > draw_imp_odds,
+      true = (max_draw_price * (outcome == "D")) -1,
+      false = 0
+   )) %>% 
+   mutate(away_bets = if_else(
+      condition = pred_away > away_imp_odds,
+      true = (max_away_price * (outcome == "A")) -1,
+      false = 0
+   )) %>%
+   group_by(season) %>% 
+   mutate(all_bets = home_bets + draw_bets + away_bets) %>%
+   summarise(
+      location = c("home_bets", "draw_bets", "away_bets"),
+      totals = c(
+         sum(home_bets != 0), 
+         sum(draw_bets != 0), 
+         sum(away_bets != 0)
+      ),
+      profits = c(
+         sum(home_bets), 
+         sum(draw_bets), 
+         sum(away_bets)
+      ),
+      percent = profits / totals
+   ) %>% ungroup() %>% filter(location == "home_bets")
+```
+
+```{r}
+football_test %>% 
+   bind_cols(preds_xg_points) %>% 
+   select(-starts_with("roll_")) %>%
+   mutate(implied_odds = 1 / max_home_price) %>% 
+   mutate(bets = if_else(
+      condition = pred_home > implied_odds, 
+      true = (max_home_price * (outcome == "H") - 1),
+      false = 0
+   )) %>% 
+   group_by(season) %>% 
+   summarise(profits = sum(bets)) %>% 
+   ungroup() %>% 
+   mutate(total_profits = cumsum(profits)) %>% 
+   ggplot(aes(x = season, y = total_profits)) +
+   geom_col(colour = "black", fill = "#56B4E9", alpha = 0.5) +
+   labs(x = "Season", y = NULL, title = "Showing accumulated profit over five seasons") +
+   theme_classic()
+```
+
+
+
+
+
+
+
+
+
+
