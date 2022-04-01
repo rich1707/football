@@ -21,6 +21,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
+thematic::thematic_rmd()
 
 # fonts - Lato and Fira Sans
 ```
@@ -504,7 +505,6 @@ football_data %>%
    coord_flip() + 
    labs(x = NULL, y = NULL, title = "Total of each outcome by season") + 
    guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
-   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
    theme_classic()
 ```
 
@@ -526,7 +526,6 @@ football_data %>%
    coord_flip() + 
    labs(x = NULL, y = NULL, title = "Total goals home and away by season") +
    guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
-   scale_fill_manual(values = c("#999999", "#56B4E9")) +
    theme_classic()
 ```
 
@@ -598,7 +597,7 @@ football_data %>%
    mutate(goal_supremacy = goal_diff - min(goal_diff)) %>% 
    mutate(teams = fct_reorder(teams, goal_supremacy)) %>% 
    ggplot(aes(x = teams, y = goal_supremacy)) + 
-   geom_col(fill = "#56B4E9", alpha = 0.5, colour = "black") + 
+   geom_col() + 
    coord_flip() +
    labs(x = NULL, y = NULL, title = "Goal Supremacy in the 2018-19 Season") +
    theme_classic()
@@ -653,7 +652,6 @@ football_data %>%
    labs(y = "Totals", x = NULL, 
         title = "Breakdown of results by team for the 2018-19 season") + 
    guides(fill = guide_legend(reverse = TRUE, title = NULL)) +
-   scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
    theme_classic()
 ```
 
