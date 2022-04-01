@@ -927,7 +927,7 @@ football_test %>%
    ungroup() %>% 
    mutate(total_profits = cumsum(profits)) %>% 
    ggplot(aes(x = season, y = total_profits)) +
-   geom_col(colour = "black", fill = "#56B4E9", alpha = 0.5) +
+   geom_col() +
    labs(x = "Season", y = NULL, title = "Showing accumulated profit over five seasons") +
    theme_classic()
 ```
