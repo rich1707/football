@@ -2,15 +2,19 @@
 title: "A Simple Football Betting Model"
 author: "Richard Ryan"
 date: '11 March 2022'
-output: 
-   html_document: 
-     css: style.css
-     theme: readable
-     highlight: pygments
-     toc: true
-     toc_depth: 3
-     toc_float: true
-     number_sections: true
+output:
+  html_document:
+    number_section: true 
+    toc: true
+    toc_float: true 
+    theme:
+      bg: "#e8dcda"
+      fg: "black"
+      primary: "blue"
+      base_font:
+        google: "Prompt"
+      code_font:
+        google: "Roboto Mono"
 ---
 
 <body style="background-color:#e8dcda;"> 
@@ -170,7 +174,7 @@ We now loop over the `page_url` vector, using `RSelenium` to navigate between su
 
 There aren't many situations in R where a for-loop is needed, but using a `map()` function would be very complex here. 
 
-Perhaps even more unusual than the for-loop is the use of a nested while-loop; this is needed in order to navigate between the pages rendered by JavaScript. Basically, the while-loop runs for as long as the prev_page_button (a JavaSCript control) is active, which allows us to access all subpages within each url.  
+Perhaps even more unusual than the for-loop is the use of a nested while-loop; this is needed in order to navigate between the pages rendered by JavaScript. Basically, the while-loop runs for as long as the prev_page_button (a JavaSCript control) is active, which allows us to access all sub-pages within each url.  
 
 ```{r, eval=FALSE}
 
@@ -242,7 +246,7 @@ One dataframe and a collection of csv files. Before we can start building our mo
 
 The two dataframes can then be joined together for feature engineering and modelling.
 
-## The xG dataframe
+### The xG dataframe
 
 We can make a start on the the `football_xg_results` dataframe, as this is the simpler task of the two. Start by reading in the relevant dataframe:
 
@@ -570,7 +574,7 @@ football_data %>%
    arrange(desc(total_points))
 ```
 
-The goal difference between the top and bottom sides is a remarkable 126 goals across just 38 games. This is a staggering difference and the features we build for our model must reflect this. (Introduce goal supremacy here)
+The goal difference between the top and bottom sides is a remarkable 126 goals across just 38 games. This is a staggering difference and the features we build for our model must reflect this - a concept usually know as *goal supremacy*. 
 
 ```{r}
 football_data %>% 
@@ -841,14 +845,22 @@ We are now ready to use our model to predict on the matches we assigned to our t
 
 # Evaluating our Model
 
+Sometimes it is far from easy to say how good a model is. No matter which metric is used to evaluate the results, and no matter what score is obtained, we can't easily judge the model to be good or bad thereby. In predicting football games, for example, we would expect to predict the correct outcome quite often, because there are only three possible outcomes and there is, as we have seen, a significant difference in the ability of the sides contesting these games.
+
+This is where betting odds are invaluable. The betting odds represent a prediction as to the outcome of the game. If we can build a model that is *profitable* then we can regard it as a very respectable achievement, as it improves upon the models produced by the bookmakers. This isa tall order given the simplicity of the model we have built, but it will be interesting to see how close to this ideal we can get.   
+
+So first let us build a dataframe of predictions, all made on hitherto unseen data:
+
 ```{r}
 preds_xg_points <- 
    predict(model_xg_net, new_data = football_test, type = "prob") %>% 
    rename(pred_home = .pred_H, pred_draw = .pred_D, pred_away = .pred_A)
 ```
 
+Now let's test to see if our model is profitable:
+
 ```{r}
-football_test %>% 
+football_results <- football_test %>% 
    bind_cols(preds_xg_points) %>% 
    select(-starts_with("roll_")) %>% 
    mutate(
@@ -884,10 +896,23 @@ football_test %>%
          sum(home_bets), 
          sum(draw_bets), 
          sum(away_bets)
-      ),
-      percent = profits / totals
-   ) %>% ungroup() %>% filter(location == "home_bets")
+      ))
 ```
+
+```{r}
+football_results
+```
+
+These are very interesting results. It's no great surprise to see that the model isn't profitable overall; what is surprising, however, is how the results differ by location. Consider, for example, the predictions limited to home-wins:
+
+```{r}
+football_results %>% 
+   filter(location == "home_bets")
+```
+
+Here four of the five seasons are profitable. Moreover, the only loss was made in the 2020-21 season when matches were played behind closed doors, a situation that seemingly nullified the home-advantage and threw out our model. 
+
+Nevertheless, we can claim this as a modest success. Much more work is needed to bring the draw and away predictions up to the same level, and perhaps safeguards need to be built in when it comes to future matches played behind closed doors (should the situation ever be repeated).
 
 ```{r}
 football_test %>% 
@@ -909,7 +934,7 @@ football_test %>%
    theme_classic()
 ```
 
-
+So our simple model could be used for betting purposes. Were we to limit our bets to the home-side, then the model works well enough to return a profit. Nevertheless, there is considerable room for improvement. 
 
 
 
