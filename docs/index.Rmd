@@ -595,7 +595,7 @@ football_data %>%
    mutate(goal_supremacy = goal_diff - min(goal_diff)) %>% 
    mutate(teams = fct_reorder(teams, goal_supremacy)) %>% 
    ggplot(aes(x = teams, y = goal_supremacy)) + 
-   geom_col(fill =  "#174ca3", alpha = 0.5) + 
+   geom_col(fill = "#2a5b1d", alpha = 0.5) + 
    coord_flip() +
    labs(x = NULL, y = NULL, title = "Goal Supremacy in the 2018-19 Season") +
    theme_classic()
@@ -625,7 +625,7 @@ team_order <- football_data %>%
    pull(teams)
 ```
 
-Explain plot below:
+This plot shows the number of games each side won, drew or lost in in the 2018-19 season. The teams are arranged according to finishing position in the league. 
 
 ```{r}
 football_data %>% 
@@ -925,7 +925,7 @@ football_test %>%
    ungroup() %>% 
    mutate(total_profits = cumsum(profits)) %>% 
    ggplot(aes(x = season, y = total_profits)) +
-   geom_col(fill =  "#174ca3", alpha = 0.5) +
+   geom_col(fill =  "#2a5b1d", alpha = 0.5) +
    labs(x = "Season", y = NULL, title = "Showing accumulated profit over five seasons") +
    theme_classic()
 ```
