@@ -625,7 +625,7 @@ team_order <- football_data %>%
    pull(teams)
 ```
 
-This plot shows the number of games each side won, drew or lost in in the 2018-19 season. The teams are arranged according to finishing position in the league. 
+This plot shows the number of games each side won, drew or lost in in the 2018-19 season. The teams are arranged according to their finishing position in the league. 
 
 ```{r}
 football_data %>% 

@@ -2352,7 +2352,7 @@ a vector of team-names, ordered by way of finishing position:</p>
    arrange(desc(total_points)) %&gt;% 
    pull(teams)</code></pre>
 <p>This plot shows the number of games each side won, drew or lost in in
-the 2018-19 season. The teams are arranged according to finishing
+the 2018-19 season. The teams are arranged according to their finishing
 position in the league.</p>
 <pre class="r"><code>football_data %&gt;% 
    pivot_longer(home_team:away_team, names_to = &quot;location&quot;, values_to = &quot;teams&quot;) %&gt;% 
