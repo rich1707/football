@@ -17,8 +17,6 @@ output:
         google: "Roboto Mono"
 ---
 
-<body style="background-color:#e8dcda;"> 
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, paged.print = FALSE)
 thematic::thematic_rmd()
@@ -247,7 +245,7 @@ One dataframe and a collection of csv files. Before we can start building our mo
 
 The two dataframes can then be joined together for feature engineering and modelling.
 
-### The xG dataframe
+## The xG dataframe
 
 We can make a start on the the `football_xg_results` dataframe, as this is the simpler task of the two. Start by reading in the relevant dataframe:
 
@@ -597,7 +595,7 @@ football_data %>%
    mutate(goal_supremacy = goal_diff - min(goal_diff)) %>% 
    mutate(teams = fct_reorder(teams, goal_supremacy)) %>% 
    ggplot(aes(x = teams, y = goal_supremacy)) + 
-   geom_col() + 
+   geom_col(fill =  "#174ca3", alpha = 0.5) + 
    coord_flip() +
    labs(x = NULL, y = NULL, title = "Goal Supremacy in the 2018-19 Season") +
    theme_classic()
@@ -927,7 +925,7 @@ football_test %>%
    ungroup() %>% 
    mutate(total_profits = cumsum(profits)) %>% 
    ggplot(aes(x = season, y = total_profits)) +
-   geom_col() +
+   geom_col(fill =  "#174ca3", alpha = 0.5) +
    labs(x = "Season", y = NULL, title = "Showing accumulated profit over five seasons") +
    theme_classic()
 ```
